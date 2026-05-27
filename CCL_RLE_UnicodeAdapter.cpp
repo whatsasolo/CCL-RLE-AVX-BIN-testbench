@@ -62,6 +62,7 @@ namespace
 		timing.dThresholdRunsMs = ElapsedMs(phaseStarted);
 
 		const int runCount = static_cast<int>(runs.size());
+		timing.nRunCount = runCount;
 		if (runCount == 0)
 			return 0;
 
@@ -130,11 +131,14 @@ namespace
 		}
 
 		const int blobCount = static_cast<int>(stats.size());
+		timing.nBlobCount = blobCount;
+		timing.dStatAggregateMs = ElapsedMs(phaseStarted);
 		if (blobCount == 0)
 		{
-			timing.dStatisticsMs = ElapsedMs(phaseStarted);
+			timing.dStatisticsMs = timing.dStatAggregateMs;
 			return 0;
 		}
+		phaseStarted = MeasureClock::now();
 		std::vector<std::vector<std::vector<std::pair<int, int>>>> blobRows(static_cast<size_t>(blobCount));
 		for (int index = 0; index < blobCount; ++index)
 			blobRows[static_cast<size_t>(index)].resize(static_cast<size_t>(roiHeight));
@@ -144,7 +148,8 @@ namespace
 			blobRows[static_cast<size_t>(runBlobIndex[static_cast<size_t>(index)])][static_cast<size_t>(run.y)]
 				.emplace_back(run.x0, run.x1);
 		}
-		timing.dStatisticsMs = ElapsedMs(phaseStarted);
+		timing.dBlobRowBuildMs = ElapsedMs(phaseStarted);
+		timing.dStatisticsMs = timing.dStatAggregateMs + timing.dBlobRowBuildMs;
 
 		phaseStarted = MeasureClock::now();
 		std::vector<int> order(static_cast<size_t>(blobCount));
@@ -182,6 +187,7 @@ namespace
 			defect.dCompactness = detector.GetRoundness(area, perimeter);
 			defects.emplace_back(defect);
 		}
+		timing.nSelectedCount = static_cast<int>(defects.size());
 		timing.dFeatureMs = ElapsedMs(phaseStarted);
 		return blobCount;
 	}

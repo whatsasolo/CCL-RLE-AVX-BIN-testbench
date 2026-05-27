@@ -9,7 +9,7 @@ namespace
 		ID_RUN_ONCE,
 		ID_BENCHMARK,
 		ID_WHOLE_IMAGE,
-		ID_SIX_FIXED_ROIS,
+		ID_FIXED_ROIS,
 		ID_ZOOM_ROI,
 		ID_USE_8_CONN,
 		ID_WARMUP,
@@ -34,17 +34,19 @@ namespace
 		int bottom;
 	};
 
-	// Paste six production m_rtInspArea rectangles as { left, top, right, bottom }.
-	// If any rectangle is invalid, the temporary equal-width layout is used.
-	constexpr std::array<FixedRoiDefinition, 6> kFixedRoiPreset =
+	// 실제 장비의 m_rtInspArea 좌표를 { left, top, right, bottom } 형식으로 입력한다.
+	// 유효하지 않은 사각형이 하나라도 있으면 임시 균등 분할 배치를 사용한다.
+	constexpr std::array<FixedRoiDefinition, 7> kFixedRoiPreset =
 	{{
-		{ 5440, 0, 10040, 6144 }, // Lane 0: m_rtInspArea[TYPE_?][0]
-		{ 10900, 0,15500, 6144 }, // Lane 1: m_rtInspArea[TYPE_?][1]
-		{ 16300, 0, 20900, 6144 }, // Lane 2: m_rtInspArea[TYPE_?][2]
-		{ 21700, 0, 26300, 6144 }, // Lane 3: m_rtInspArea[TYPE_?][3]
-		{ 27150, 0, 31750, 6144 }, // Lane 4: m_rtInspArea[TYPE_?][4]
-		{ 32550, 0, 37150, 6144 }  // Lane 5: m_rtInspArea[TYPE_?][5]
+		{ 5440, 0, 10040, 6144 }, // 구간 0: m_rtInspArea[TYPE_?][0]
+		{ 10900, 0,15500, 6144 }, // 구간 1: m_rtInspArea[TYPE_?][1]
+		{ 16300, 0, 20900, 6144 }, // 구간 2: m_rtInspArea[TYPE_?][2]
+		{ 21700, 0, 26300, 6144 }, // 구간 3: m_rtInspArea[TYPE_?][3]
+		{ 27150, 0, 31750, 6144 }, // 구간 4: m_rtInspArea[TYPE_?][4]
+		{ 32550, 0, 37150, 6144 }, // 구간 5: m_rtInspArea[TYPE_?][5]
+		{ 38000, 0, 42600, 6144 }  // 구간 6: m_rtInspArea[TYPE_?][6] -> defect 없는 곳
 	}};
+	constexpr size_t kFixedRoiCount = kFixedRoiPreset.size();
 
 	int ReadEditInt(const CEdit& edit)
 	{
@@ -61,7 +63,7 @@ BEGIN_MESSAGE_MAP(CMainFrame, CFrameWnd)
 	ON_BN_CLICKED(ID_RUN_ONCE, &CMainFrame::OnRunOnce)
 	ON_BN_CLICKED(ID_BENCHMARK, &CMainFrame::OnBenchmark)
 	ON_BN_CLICKED(ID_WHOLE_IMAGE, &CMainFrame::OnWholeImage)
-	ON_BN_CLICKED(ID_SIX_FIXED_ROIS, &CMainFrame::OnSixFixedRois)
+	ON_BN_CLICKED(ID_FIXED_ROIS, &CMainFrame::OnFixedRois)
 	ON_BN_CLICKED(ID_ZOOM_ROI, &CMainFrame::OnZoomRoi)
 	ON_MESSAGE(WM_APP_ROI_CHANGED, &CMainFrame::OnRoiChanged)
 	ON_MESSAGE(WM_APP + 11, &CMainFrame::OnLoadDefaultImage)
@@ -82,7 +84,7 @@ int CMainFrame::OnCreate(LPCREATESTRUCT createStruct)
 	m_runButton.Create(L"Run Once", WS_CHILD | WS_VISIBLE | BS_DEFPUSHBUTTON, CRect(), this, ID_RUN_ONCE);
 	m_benchmarkButton.Create(L"Benchmark", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, CRect(), this, ID_BENCHMARK);
 	m_wholeButton.Create(L"Use Whole Image", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, CRect(), this, ID_WHOLE_IMAGE);
-	m_sixRoiButton.Create(L"Use 6 Fixed ROIs", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, CRect(), this, ID_SIX_FIXED_ROIS);
+	m_fixedRoiButton.Create(L"Use Fixed ROIs", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, CRect(), this, ID_FIXED_ROIS);
 	m_zoomCheck.Create(L"Zoom to ROI", WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX, CRect(), this, ID_ZOOM_ROI);
 	m_connCheck.Create(L"8-connected", WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX, CRect(), this, ID_USE_8_CONN);
 	m_warmupCheck.Create(L"Warm-up before benchmark", WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX, CRect(), this, ID_WARMUP);
@@ -133,10 +135,14 @@ int CMainFrame::OnCreate(LPCREATESTRUCT createStruct)
 	m_timingList.InsertColumn(3, L"Column Corr.", LVCFMT_RIGHT, 94);
 	m_timingList.InsertColumn(4, L"Thresh/Runs", LVCFMT_RIGHT, 100);
 	m_timingList.InsertColumn(5, L"Label Merge", LVCFMT_RIGHT, 94);
-	m_timingList.InsertColumn(6, L"Statistics", LVCFMT_RIGHT, 84);
-	m_timingList.InsertColumn(7, L"Features", LVCFMT_RIGHT, 82);
-	m_timingList.InsertColumn(8, L"Out Merge", LVCFMT_RIGHT, 82);
-	m_timingList.InsertColumn(9, L"Returned", LVCFMT_RIGHT, 70);
+	m_timingList.InsertColumn(6, L"Stat Agg.", LVCFMT_RIGHT, 82);
+	m_timingList.InsertColumn(7, L"Row Build", LVCFMT_RIGHT, 84);
+	m_timingList.InsertColumn(8, L"Features", LVCFMT_RIGHT, 82);
+	m_timingList.InsertColumn(9, L"Out Merge", LVCFMT_RIGHT, 82);
+	m_timingList.InsertColumn(10, L"Runs", LVCFMT_RIGHT, 80);
+	m_timingList.InsertColumn(11, L"Raw Blobs", LVCFMT_RIGHT, 84);
+	m_timingList.InsertColumn(12, L"Selected", LVCFMT_RIGHT, 78);
+	m_timingList.InsertColumn(13, L"Returned", LVCFMT_RIGHT, 78);
 
 	PostMessage(WM_APP + 11);
 	return 0;
@@ -169,7 +175,7 @@ void CMainFrame::OnSize(UINT type, int cx, int cy)
 	place(m_openButton, margin, y, panelWidth, buttonH); y += 40;
 	place(m_imageText, margin, y, panelWidth, 42); y += 49;
 	place(m_roiText, margin, y, panelWidth, 36); y += 44;
-	place(m_sixRoiButton, margin, y, 151, buttonH);
+	place(m_fixedRoiButton, margin, y, 151, buttonH);
 	place(m_wholeButton, margin + 157, y, 151, buttonH); y += 34;
 	place(m_zoomCheck, margin, y + 5, 136, inputH); y += 37;
 
@@ -217,7 +223,7 @@ bool CMainFrame::LoadImageFile(const CString& path)
 
 	m_roi.SetRect(0, 0, m_image.Width(), m_image.Height());
 	m_view.SetImage(&m_image);
-	ApplySixFixedRois();
+	ApplyFixedRois();
 	ClearResults();
 	UpdateImageDetails();
 	return true;
@@ -422,7 +428,7 @@ void CMainFrame::PresentRun(const std::vector<double>& timings, const std::vecto
 		const size_t roiCount = roiTimings.back().size();
 		for (size_t i = 0; i < roiCount; ++i)
 		{
-			std::array<double, 8> sums{};
+			std::array<double, 9> sums{};
 			for (const auto& sample : roiTimings)
 			{
 				if (i < sample.size())
@@ -432,9 +438,10 @@ void CMainFrame::PresentRun(const std::vector<double>& timings, const std::vecto
 					sums[2] += sample[i].dColumnCorrectionMs;
 					sums[3] += sample[i].dThresholdRunsMs;
 					sums[4] += sample[i].dLabelMergeMs;
-					sums[5] += sample[i].dStatisticsMs;
-					sums[6] += sample[i].dFeatureMs;
-					sums[7] += sample[i].dOutputMergeMs;
+					sums[5] += sample[i].dStatAggregateMs;
+					sums[6] += sample[i].dBlobRowBuildMs;
+					sums[7] += sample[i].dFeatureMs;
+					sums[8] += sample[i].dOutputMergeMs;
 				}
 			}
 			const double sampleCount = static_cast<double>(roiTimings.size());
@@ -447,8 +454,14 @@ void CMainFrame::PresentRun(const std::vector<double>& timings, const std::vecto
 				text.Format(L"%.3f", sums[static_cast<size_t>(column)] / sampleCount);
 				m_timingList.SetItemText(row, column + 1, text);
 			}
+			text.Format(L"%d", latest.nRunCount);
+			m_timingList.SetItemText(row, 10, text);
+			text.Format(L"%d", latest.nBlobCount);
+			m_timingList.SetItemText(row, 11, text);
+			text.Format(L"%d", latest.nSelectedCount);
+			m_timingList.SetItemText(row, 12, text);
 			text.Format(L"%zu", latest.nReturnedCount);
-			m_timingList.SetItemText(row, 9, text);
+			m_timingList.SetItemText(row, 13, text);
 		}
 	}
 
@@ -482,11 +495,11 @@ void CMainFrame::OnWholeImage()
 	ClearResults();
 }
 
-void CMainFrame::OnSixFixedRois()
+void CMainFrame::OnFixedRois()
 {
 	if (!m_image.IsLoaded())
 		return;
-	ApplySixFixedRois();
+	ApplyFixedRois();
 	ClearResults();
 }
 
@@ -516,12 +529,14 @@ void CMainFrame::UpdateImageDetails()
 void CMainFrame::UpdateRoiDetails()
 {
 	CString text;
-	if (m_rois.size() == 6)
+	if (m_rois.size() == kFixedRoiCount)
 	{
 		if (m_usingConfiguredFixedRois)
-			text.Format(L"ROI mode: 6 fixed coordinates (L0-L5)\r\nEdit: kFixedRoiPreset in MainFrame.cpp");
+			text.Format(L"ROI mode: %zu fixed coordinates (L0-L%zu)\r\nEdit: kFixedRoiPreset in MainFrame.cpp",
+				kFixedRoiCount, kFixedRoiCount - 1);
 		else
-			text.Format(L"ROI mode: 6 provisional equal splits\r\nEdit: kFixedRoiPreset in MainFrame.cpp");
+			text.Format(L"ROI mode: %zu provisional equal splits\r\nEdit: kFixedRoiPreset in MainFrame.cpp",
+				kFixedRoiCount);
 	}
 	else
 	{
@@ -531,17 +546,17 @@ void CMainFrame::UpdateRoiDetails()
 	m_roiText.SetWindowText(text);
 }
 
-void CMainFrame::ApplySixFixedRois()
+void CMainFrame::ApplyFixedRois()
 {
 	m_usingConfiguredFixedRois = TryApplyConfiguredFixedRois();
 	if (!m_usingConfiguredFixedRois)
 	{
 		m_rois.clear();
-		m_rois.reserve(6);
-		for (int lane = 0; lane < 6; ++lane)
+		m_rois.reserve(kFixedRoiCount);
+		for (size_t lane = 0; lane < kFixedRoiCount; ++lane)
 		{
-			const int left = static_cast<int>((static_cast<int64_t>(m_image.Width()) * lane) / 6);
-			const int right = static_cast<int>((static_cast<int64_t>(m_image.Width()) * (lane + 1)) / 6);
+			const int left = static_cast<int>((static_cast<int64_t>(m_image.Width()) * lane) / kFixedRoiCount);
+			const int right = static_cast<int>((static_cast<int64_t>(m_image.Width()) * (lane + 1)) / kFixedRoiCount);
 			m_rois.emplace_back(left, 0, right, m_image.Height());
 		}
 	}
@@ -555,7 +570,7 @@ void CMainFrame::ApplySixFixedRois()
 bool CMainFrame::TryApplyConfiguredFixedRois()
 {
 	m_rois.clear();
-	m_rois.reserve(6);
+	m_rois.reserve(kFixedRoiCount);
 	for (const auto& definition : kFixedRoiPreset)
 	{
 		const CRect roi(definition.left, definition.top, definition.right, definition.bottom);

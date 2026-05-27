@@ -17,7 +17,7 @@ protected:
 	afx_msg void OnRunOnce();
 	afx_msg void OnBenchmark();
 	afx_msg void OnWholeImage();
-	afx_msg void OnSixFixedRois();
+	afx_msg void OnFixedRois();
 	afx_msg void OnZoomRoi();
 	afx_msg LRESULT OnRoiChanged(WPARAM, LPARAM);
 	afx_msg LRESULT OnLoadDefaultImage(WPARAM, LPARAM);
@@ -29,7 +29,7 @@ private:
 	bool IsAvx2Available() const;
 	double ExecuteOne(const std::vector<rle::AVX_DATA>& jobs, std::vector<rle::RleBlobStats>& output, std::vector<bench::RoiTiming>& roiTiming);
 	std::vector<rle::AVX_DATA> BuildJobs(const rle::AVX_DATA& templateData) const;
-	void ApplySixFixedRois();
+	void ApplyFixedRois();
 	bool TryApplyConfiguredFixedRois();
 	void PresentRun(const std::vector<double>& timings, const std::vector<rle::RleBlobStats>& output, const std::vector<std::vector<bench::RoiTiming>>& roiTimings);
 	void UpdateImageDetails();
@@ -50,7 +50,7 @@ private:
 	CButton m_runButton;
 	CButton m_benchmarkButton;
 	CButton m_wholeButton;
-	CButton m_sixRoiButton;
+	CButton m_fixedRoiButton;
 	CButton m_zoomCheck;
 	CButton m_connCheck;
 	CButton m_warmupCheck;

@@ -8,12 +8,16 @@ namespace bench
 	{
 		int nLane = 0;
 		CRect rtInspect{};
+		int nRunCount = 0;
 		int nBlobCount = 0;
+		int nSelectedCount = 0;
 		size_t nReturnedCount = 0;
 		double dBufferMs = 0.0;
 		double dColumnCorrectionMs = 0.0;
 		double dThresholdRunsMs = 0.0;
 		double dLabelMergeMs = 0.0;
+		double dStatAggregateMs = 0.0;
+		double dBlobRowBuildMs = 0.0;
 		double dStatisticsMs = 0.0;
 		double dFeatureMs = 0.0;
 		double dOutputMergeMs = 0.0;

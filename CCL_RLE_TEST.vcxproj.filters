@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <Filter Include="Algorithm">
+      <UniqueIdentifier>{7E875A7B-D851-4DAF-83AB-5EC812E53AD0}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Application">
+      <UniqueIdentifier>{3012C133-A062-4022-9C30-85803AE95FB8}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Support">
+      <UniqueIdentifier>{57D73614-D374-4322-912A-50B98625F365}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="CCL_RLE.h"><Filter>Algorithm</Filter></ClInclude>
+    <ClInclude Include="gThreadPool.h"><Filter>Support</Filter></ClInclude>
+    <ClInclude Include="ImageBuffer.h"><Filter>Application</Filter></ClInclude>
+    <ClInclude Include="ImageView.h"><Filter>Application</Filter></ClInclude>
+    <ClInclude Include="MainFrame.h"><Filter>Application</Filter></ClInclude>
+    <ClInclude Include="MeasuredRunner.h"><Filter>Application</Filter></ClInclude>
+    <ClInclude Include="stdafx.h"><Filter>Support</Filter></ClInclude>
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="CCL_RLE.cpp"><Filter>Algorithm</Filter></ClCompile>
+    <ClCompile Include="CCL_RLE_UnicodeAdapter.cpp"><Filter>Algorithm</Filter></ClCompile>
+    <ClCompile Include="CclRleBenchApp.cpp"><Filter>Application</Filter></ClCompile>
+    <ClCompile Include="ImageBuffer.cpp"><Filter>Application</Filter></ClCompile>
+    <ClCompile Include="ImageView.cpp"><Filter>Application</Filter></ClCompile>
+    <ClCompile Include="MainFrame.cpp"><Filter>Application</Filter></ClCompile>
+    <ClCompile Include="stdafx.cpp"><Filter>Support</Filter></ClCompile>
+  </ItemGroup>
+</Project>

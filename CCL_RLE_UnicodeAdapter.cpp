@@ -138,18 +138,6 @@ namespace
 			timing.dStatisticsMs = timing.dStatAggregateMs;
 			return 0;
 		}
-		phaseStarted = MeasureClock::now();
-		std::vector<std::vector<std::vector<std::pair<int, int>>>> blobRows(static_cast<size_t>(blobCount));
-		for (int index = 0; index < blobCount; ++index)
-			blobRows[static_cast<size_t>(index)].resize(static_cast<size_t>(roiHeight));
-		for (int index = 0; index < runCount; ++index)
-		{
-			const rle::Run& run = runs[static_cast<size_t>(index)];
-			blobRows[static_cast<size_t>(runBlobIndex[static_cast<size_t>(index)])][static_cast<size_t>(run.y)]
-				.emplace_back(run.x0, run.x1);
-		}
-		timing.dBlobRowBuildMs = ElapsedMs(phaseStarted);
-		timing.dStatisticsMs = timing.dStatAggregateMs + timing.dBlobRowBuildMs;
 
 		phaseStarted = MeasureClock::now();
 		std::vector<int> order(static_cast<size_t>(blobCount));
@@ -158,13 +146,44 @@ namespace
 		{
 			return stats[static_cast<size_t>(lhs)].area > stats[static_cast<size_t>(rhs)].area;
 		});
-		const int selectedCount = std::min(detector.m_nMaxDefectCnt, blobCount);
-		for (int index = 0; index < selectedCount; ++index)
+		const int candidateCount = std::min(detector.m_nMaxDefectCnt, blobCount);
+		std::vector<int> pickedBlobs;
+		pickedBlobs.reserve(static_cast<size_t>(candidateCount));
+		for (int index = 0; index < candidateCount; ++index)
 		{
 			const int blobIndex = order[static_cast<size_t>(index)];
-			const rle::Stat& stat = stats[static_cast<size_t>(blobIndex)];
-			if (stat.area <= detector.m_nNoiseFilterPixelCnt)
+			if (stats[static_cast<size_t>(blobIndex)].area <= detector.m_nNoiseFilterPixelCnt)
 				break;
+			pickedBlobs.push_back(blobIndex);
+		}
+
+		std::vector<int> blobToPicked(static_cast<size_t>(blobCount), -1);
+		std::vector<std::vector<std::vector<std::pair<int, int>>>> blobRows(pickedBlobs.size());
+		for (int index = 0; index < static_cast<int>(pickedBlobs.size()); ++index)
+		{
+			const int blobIndex = pickedBlobs[static_cast<size_t>(index)];
+			blobToPicked[static_cast<size_t>(blobIndex)] = index;
+			const rle::Stat& stat = stats[static_cast<size_t>(blobIndex)];
+			blobRows[static_cast<size_t>(index)].resize(static_cast<size_t>(stat.maxy - stat.miny + 1));
+		}
+		for (int index = 0; index < runCount; ++index)
+		{
+			const rle::Run& run = runs[static_cast<size_t>(index)];
+			const int blobIndex = runBlobIndex[static_cast<size_t>(index)];
+			const int pickedIndex = blobToPicked[static_cast<size_t>(blobIndex)];
+			if (pickedIndex < 0)
+				continue;
+			const int localY = run.y - stats[static_cast<size_t>(blobIndex)].miny;
+			blobRows[static_cast<size_t>(pickedIndex)][static_cast<size_t>(localY)].emplace_back(run.x0, run.x1);
+		}
+		timing.dBlobRowBuildMs = ElapsedMs(phaseStarted);
+		timing.dStatisticsMs = timing.dStatAggregateMs + timing.dBlobRowBuildMs;
+
+		phaseStarted = MeasureClock::now();
+		for (int index = 0; index < static_cast<int>(pickedBlobs.size()); ++index)
+		{
+			const int blobIndex = pickedBlobs[static_cast<size_t>(index)];
+			const rle::Stat& stat = stats[static_cast<size_t>(blobIndex)];
 			rle::RleBlobStats defect;
 			defect.eSurfaceType = data.eSurfaceType;
 			defect.bUseWhiteImg = data.isWhiteImage;
@@ -182,8 +201,8 @@ namespace
 			defect.dRatioY = detector.GetRatioY(defect.dSizeX, defect.dSizeY);
 			defect.dAngle = detector.GetAngle(stat);
 			const double area = static_cast<double>(stat.area) * detector.m_dScaleX * detector.m_dScaleY;
-			const double perimeter = detector.ComputePerimeter4(blobRows[static_cast<size_t>(blobIndex)],
-				roiHeight, detector.m_dScaleY);
+			const double perimeter = detector.ComputePerimeter4(blobRows[static_cast<size_t>(index)],
+				detector.m_dScaleY);
 			defect.dCompactness = detector.GetRoundness(area, perimeter);
 			defects.emplace_back(defect);
 		}
@@ -198,7 +217,6 @@ void RunMeasuredBatch(CCL_RLE& detector, const uint8_t* whiteImage, const uint8_
 	std::vector<rle::RleBlobStats>& output, bool use8Connectivity,
 	std::vector<bench::RoiTiming>& roiTiming)
 {
-	std::vector<std::vector<uint8_t>> debugBins(jobs.size());
 	std::vector<std::future<void>> handles(jobs.size());
 	roiTiming.assign(jobs.size(), bench::RoiTiming{});
 
@@ -207,12 +225,10 @@ void RunMeasuredBatch(CCL_RLE& detector, const uint8_t* whiteImage, const uint8_
 		const rle::AVX_DATA data = jobs[i];
 		const CRect roi = data.rtInspect;
 		const uint8_t* source = data.isWhiteImage ? whiteImage : darkImage;
-		handles[i] = detector.m_pJobPool->addJob([=, &detector, &output, &debugBins, &roiTiming]()
+		handles[i] = detector.m_pJobPool->addJob([=, &detector, &output, &roiTiming]()
 		{
 			const auto started = std::chrono::high_resolution_clock::now();
 			const auto bufferStarted = MeasureClock::now();
-			if (roi.Width() > 0 && roi.Height() > 0)
-				debugBins[i].assign(static_cast<size_t>(roi.Width()) * roi.Height(), 0);
 			bench::RoiTiming timing;
 			timing.nLane = data.nLane;
 			timing.rtInspect = roi;

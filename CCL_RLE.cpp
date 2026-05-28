@@ -18,9 +18,6 @@ void CCL_RLE::RunBatch_ThreadPool_GrayCorrCCL(const uint8_t* pSrcGrayW, const ui
 {
 	auto start_time1 = std::chrono::high_resolution_clock::now();
 
-	// 검사영역별 디버그용 버퍼
-	std::vector<std::vector<uint8_t>> dbgBins(vtAvxData.size());
-
 	std::vector<std::future<void>> vecHandles(vtAvxData.size());
 
 	unsigned int nCnt = 0;
@@ -30,24 +27,17 @@ void CCL_RLE::RunBatch_ThreadPool_GrayCorrCCL(const uint8_t* pSrcGrayW, const ui
 		const rle::AVX_DATA stAvxData = vtAvxData[(size_t)i];
 		const CRect roi = vtAvxData[(size_t)i].rtInspect;
 
-		// 검사영역 크기만큼만 할당한다.
-		const int roiW = roi.Width();
-		const int roiH = roi.Height();
 		const bool isWhite = vtAvxData[(size_t)i].isWhiteImage;
 		const uint8_t* pSrcGray = isWhite ? pSrcGrayW : pSrcGrayD;
-		vecHandles[nCnt++] = m_pJobPool->addJob([=, &vecOut, &dbgBins]()
+		vecHandles[nCnt++] = m_pJobPool->addJob([=, &vecOut]()
 		{
 				auto start_time = std::chrono::high_resolution_clock::now();
-				if (roiW > 0 && roiH > 0)
-					dbgBins[(size_t)i].assign((size_t)roiW * (size_t)roiH, 0);
-				
-				uint8_t* pDbg = dbgBins[(size_t)i].empty() ? nullptr : dbgBins[(size_t)i].data();
 				std::vector<rle::RleBlobStats> vtDefectData{};
 				int nBlobCnt = RunOneRoi_GrayCorrCCL(
 					pSrcGray,
 					W, H, roi,
 					stAvxData, bUse8Conn,
-					pDbg, vtDefectData, i
+					nullptr, vtDefectData, i
 				);
 
 				if(nBlobCnt > 0){
@@ -117,16 +107,75 @@ bool CCL_RLE::BuildColCorrPrecomp(const uint8_t* pSrcGray, int W, int H, int nTh
 	std::vector<uint64_t> colCnt((size_t)nRoiW, 0ull);
 	uint64_t totalSum = 0ull;
 
-	for (int y = r.top; y < r.bottom; ++y)
+	const bool bUseAvxAccumulator = (uint64_t)nRoiH * 255ull <= (uint64_t)UINT32_MAX;
+	if (bUseAvxAccumulator)
 	{
-		const uint8_t* row = pSrcGray + (size_t)y * (size_t)W;
-		for (int x = r.left; x < r.right; ++x)
+		std::vector<uint32_t> vecColSum32((size_t)nRoiW, 0u);
+		std::vector<uint32_t> vecColCnt32((size_t)nRoiW, 0u);
+		const __m256i vLow = _mm256_set1_epi32(nThBlack - 1);
+		const __m256i vHigh = _mm256_set1_epi32(nThWhite + 1);
+		const __m256i vOne = _mm256_set1_epi32(1);
+
+		auto AddEight = [&](const __m256i vGray, const int dx)
 		{
-			const uint8_t v = row[x];
-			if (nThBlack <= v && nThWhite >= v) {
-				colSum[(size_t)(x - r.left)] += v;
-				colCnt[(size_t)(x - r.left)]++;
-				totalSum += v;
+			const __m256i vGeLow = _mm256_cmpgt_epi32(vGray, vLow);
+			const __m256i vLeHigh = _mm256_cmpgt_epi32(vHigh, vGray);
+			const __m256i vValid = _mm256_and_si256(vGeLow, vLeHigh);
+			const __m256i vSelected = _mm256_and_si256(vGray, vValid);
+			__m256i vSum = _mm256_loadu_si256((const __m256i*)(vecColSum32.data() + dx));
+			__m256i vCount = _mm256_loadu_si256((const __m256i*)(vecColCnt32.data() + dx));
+			vSum = _mm256_add_epi32(vSum, vSelected);
+			vCount = _mm256_add_epi32(vCount, _mm256_and_si256(vValid, vOne));
+			_mm256_storeu_si256((__m256i*)(vecColSum32.data() + dx), vSum);
+			_mm256_storeu_si256((__m256i*)(vecColCnt32.data() + dx), vCount);
+		};
+
+		for (int y = r.top; y < r.bottom; ++y)
+		{
+			const uint8_t* row = pSrcGray + (size_t)y * (size_t)W + (size_t)r.left;
+			int dx = 0;
+			for (; dx + 32 <= nRoiW; dx += 32)
+			{
+				const __m256i vPixels = _mm256_loadu_si256((const __m256i*)(row + dx));
+				const __m128i vLow128 = _mm256_castsi256_si128(vPixels);
+				const __m128i vHigh128 = _mm256_extracti128_si256(vPixels, 1);
+				AddEight(_mm256_cvtepu8_epi32(vLow128), dx);
+				AddEight(_mm256_cvtepu8_epi32(_mm_srli_si128(vLow128, 8)), dx + 8);
+				AddEight(_mm256_cvtepu8_epi32(vHigh128), dx + 16);
+				AddEight(_mm256_cvtepu8_epi32(_mm_srli_si128(vHigh128, 8)), dx + 24);
+			}
+			for (; dx < nRoiW; ++dx)
+			{
+				const uint8_t v = row[dx];
+				if (nThBlack <= v && nThWhite >= v)
+				{
+					vecColSum32[(size_t)dx] += v;
+					vecColCnt32[(size_t)dx]++;
+				}
+			}
+		}
+
+		for (int dx = 0; dx < nRoiW; ++dx)
+		{
+			colSum[(size_t)dx] = vecColSum32[(size_t)dx];
+			colCnt[(size_t)dx] = vecColCnt32[(size_t)dx];
+			totalSum += colSum[(size_t)dx];
+		}
+	}
+	else
+	{
+		for (int y = r.top; y < r.bottom; ++y)
+		{
+			const uint8_t* row = pSrcGray + (size_t)y * (size_t)W;
+			for (int x = r.left; x < r.right; ++x)
+			{
+				const uint8_t v = row[x];
+				if (nThBlack <= v && nThWhite >= v)
+				{
+					colSum[(size_t)(x - r.left)] += v;
+					colCnt[(size_t)(x - r.left)]++;
+					totalSum += v;
+				}
 			}
 		}
 	}
@@ -134,8 +183,6 @@ bool CCL_RLE::BuildColCorrPrecomp(const uint8_t* pSrcGray, int W, int H, int nTh
 	const double dInvN = 1.0 / (double)((int64_t)nRoiW * (int64_t)nRoiH);
 	const int nGlobalMean = (int)std::lround((double)totalSum * dInvN);
 	out.m_nGlobalMean = std::max(0, std::min(nGlobalMean, 255));
-
-	const double invH = 1.0 / (double)nRoiH;
 
 	for (int dx = 0; dx < nRoiW; ++dx)
 	{
@@ -362,17 +409,6 @@ inline int CCL_RLE::RunCCL_RLE_AVX_GrayCorrThresh(const uint8_t* pSrcGray, int W
 	if (nBlobCount == 0) return 0;
 
 
-	// 블롭별로 행의 런을 분류한다. 런은 한 번만 순회한다.
-	std::vector<std::vector<std::vector<std::pair<int, int>>>> blobRows(nBlobCount);
-	for (int i = 0; i < nBlobCount; ++i)
-		blobRows[i].resize(nRoiH);
-
-	for (int k = 0; k < runCount; ++k)
-	{
-		const rle::Run& R = runs[k];
-		blobRows[runBlobIdx[k]][R.y].emplace_back(R.x0, R.x1);
-	}
-
 	// 면적 기준으로 정렬하여 블롭을 선택한다.
 	std::vector<int> vecIdx(nBlobCount);
 	std::iota(vecIdx.begin(), vecIdx.end(), 0);
@@ -386,15 +422,42 @@ inline int CCL_RLE::RunCCL_RLE_AVX_GrayCorrThresh(const uint8_t* pSrcGray, int W
 	const int nMaxDefect = m_nMaxDefectCnt;
 	const int nPickCnt = std::min(nMaxDefect, nBlobCount); //std::min(Get_MaxDefectCnt(nRoiW, nRoiH), nBlobCount);
 	const int nNoiseFilterPixelCnt = m_nNoiseFilterPixelCnt;
-	// 결함 특징값을 계산한다.
-	// 면적이 큰 결함부터 선택한다.
+
+	std::vector<int> pickedBlobs;
+	pickedBlobs.reserve((size_t)nPickCnt);
 	for (int i = 0; i < nPickCnt; ++i)
 	{
-		const int nBlobIdx = vecIdx[i];
+		const int nBlobIdx = vecIdx[(size_t)i];
+		if (stats[(size_t)nBlobIdx].area <= nNoiseFilterPixelCnt) break;
+		pickedBlobs.push_back(nBlobIdx);
+	}
+
+	// 선택한 블롭의 경계 상자 높이만큼만 행 저장소를 준비한다.
+	std::vector<int> blobToPicked((size_t)nBlobCount, -1);
+	std::vector<std::vector<std::vector<std::pair<int, int>>>> blobRows(pickedBlobs.size());
+	for (int i = 0; i < (int)pickedBlobs.size(); ++i)
+	{
+		const int nBlobIdx = pickedBlobs[(size_t)i];
+		blobToPicked[(size_t)nBlobIdx] = i;
 		const rle::Stat& s = stats[(size_t)nBlobIdx];
-		const int root = idxToRoot[(size_t)nBlobIdx];
-		
-		if (s.area <= nNoiseFilterPixelCnt) break;
+		blobRows[(size_t)i].resize((size_t)(s.maxy - s.miny + 1));
+	}
+	for (int k = 0; k < runCount; ++k)
+	{
+		const rle::Run& R = runs[(size_t)k];
+		const int nBlobIdx = runBlobIdx[(size_t)k];
+		const int nPickedIdx = blobToPicked[(size_t)nBlobIdx];
+		if (nPickedIdx < 0) continue;
+		const int nLocalY = R.y - stats[(size_t)nBlobIdx].miny;
+		blobRows[(size_t)nPickedIdx][(size_t)nLocalY].emplace_back(R.x0, R.x1);
+	}
+
+	// 결함 특징값을 계산한다.
+	// 면적이 큰 결함부터 선택한다.
+	for (int i = 0; i < (int)pickedBlobs.size(); ++i)
+	{
+		const int nBlobIdx = pickedBlobs[(size_t)i];
+		const rle::Stat& s = stats[(size_t)nBlobIdx];
 
 		rle::RleBlobStats stDefectData;
 
@@ -416,10 +479,10 @@ inline int CCL_RLE::RunCCL_RLE_AVX_GrayCorrThresh(const uint8_t* pSrcGray, int W
 		// 모멘트 기반으로 각도를 계산한다.
 		stDefectData.dAngle = GetAngle(s);
 
-		auto& rows = blobRows[nBlobIdx];
+		auto& rows = blobRows[(size_t)i];
 
 		const double area = (double)s.area * m_dScaleX * m_dScaleY;
-		const double perim = ComputePerimeter4(rows, nRoiH, m_dScaleY);
+		const double perim = ComputePerimeter4(rows, m_dScaleY);
 
 		double circ = GetRoundness(area, perim);
 

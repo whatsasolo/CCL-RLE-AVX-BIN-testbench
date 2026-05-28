@@ -233,36 +233,30 @@ private:
 		return (n * (n + 1.0) * (2.0 * n + 1.0)) / 6.0;
 	};
 
-	static __forceinline double ComputePerimeter4(const std::vector<std::vector<std::pair<int, int>>>& rowsIn, const int nRoiH, const double dScaleY) {
+	static __forceinline double ComputePerimeter4(const std::vector<std::vector<std::pair<int, int>>>& rowsIn, const double dScaleY) {
 		double P = 0.0;
 
-		std::vector<int> rowLen(nRoiH, 0);
-		std::vector<int> rowRuns(nRoiH, 0);
-
-		for (int y = 0; y < nRoiH; ++y)
-		{
-			for (const auto& p : rowsIn[y])
-				rowLen[y] += (p.second - p.first + 1);
-
-			rowRuns[y] = (int)rowsIn[y].size();
-		}
-
+		const int nRowCount = (int)rowsIn.size();
 		// 좌/우 경계
-		for (int y = 0; y < nRoiH; ++y)
+		for (int y = 0; y < nRowCount; ++y)
 		{
-			P += 2.0 * rowRuns[y] * dScaleY;
+			P += 2.0 * rowsIn[y].size() * dScaleY;
 		}
 
 		// 상단 경계만 계산 (중복 제거)
-		for (int y = 0; y < nRoiH; ++y)
+		for (int y = 0; y < nRowCount; ++y)
 		{
+			int rowLen = 0;
+			for (const auto& p : rowsIn[y])
+				rowLen += (p.second - p.first + 1);
+
 			const int prevOverlap =
 				(y > 0) ? OverlapLen(rowsIn[y], rowsIn[y - 1]) : 0;
 			const int nextOverlap =
-				(y + 1 < nRoiH) ? OverlapLen(rowsIn[y], rowsIn[y + 1]) : 0;
+				(y + 1 < nRowCount) ? OverlapLen(rowsIn[y], rowsIn[y + 1]) : 0;
 
-			const int topExposed = rowLen[y] - prevOverlap;
-			const int btmExposed = rowLen[y] - nextOverlap;
+			const int topExposed = rowLen - prevOverlap;
+			const int btmExposed = rowLen - nextOverlap;
 
 			P += (double)(topExposed + btmExposed) * dScaleY;
 		}
